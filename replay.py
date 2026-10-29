@@ -184,7 +184,7 @@ function drawPane(k, bars, cur_idx, trades, zones, isHtf) {
     }
     // resting limit order (signal of the current candle, fills on the next one if price trades through it)
     const pd_ = PEND.get(cur_idx), open = trades.find(t => t.entry_i <= cur_idx && t.exit_i > cur_idx);
-    if (pd_ && (!open || (open.side === (pd_[1] > 0 ? 'LONG' : 'SHORT') && open.add_i < 0))) {
+    if (pd_ && (!open || (open.side === (pd_[1] > 0 ? 'LONG' : 'SHORT') && (open.add_i < 0 || open.add_i > cur_idx)))) {
       const y = yOf(pd_[2]), xs = Math.min(xOf(pd_[4]), xOf(cur_idx) - 20), xe = x1;
       ctx.strokeStyle='#3b82f6'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
       ctx.beginPath(); ctx.moveTo(xs,y); ctx.lineTo(xe,y); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth=1;
@@ -369,7 +369,7 @@ def main():
     pending, prev = [], None
     if "entry" in sig:
         for i, (sd, en, sl_) in enumerate(zip(sig["side"].values, sig["entry"].values, sig["sl"].values)):
-            if sd != 0 and not np.isnan(en) and not np.isnan(sl_):
+            if (sd > 0 or (sd < 0 and futures)) and not np.isnan(en) and not np.isnan(sl_):
                 start = prev[4] if prev and prev[0] == i - 1 and prev[1:4] == [int(sd), float(en), float(sl_)] else i
                 prev = [i, int(sd), float(en), float(sl_), start]
                 pending.append(prev)
