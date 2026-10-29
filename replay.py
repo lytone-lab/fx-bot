@@ -49,7 +49,7 @@ label{display:flex;gap:5px;align-items:center;color:#9ca3af}
    <label>Speed <select id="spd"><option>2</option><option>5</option><option selected>10</option><option>20</option></select></label>
    <label style="margin-left:auto"><input type="checkbox" id="pev" checked> Pause</label>
   </div>
-  <input type="range" id="scrub" min="0" value="0" style="width:100%;margin:8px 0;padding:0 10px">
+  <input type="range" id="scrub" min="0" max="0" value="0" style="width:100%;margin:8px 0;padding:0 10px">
   <h3>Replay Stats</h3>
   <div id="stats"></div>
   <div id="pos"></div>
@@ -59,7 +59,7 @@ label{display:flex;gap:5px;align-items:center;color:#9ca3af}
 <script>
 const D = __DATA__;
 const B_LTF = D.bars_ltf, B_HTF = D.bars_htf, T = D.trades, E = D.equity, n = B_LTF.length;
-const OV_HTF = D.ov_htf, OV_LTF = D.ov_ltf;
+const OV_HTF = D.ov_htf, OV_LTF = D.ov_ltf, L2H = D.l2h, PEND = new Map(D.pending.map(p => [p[0], p]));
 let cur = D.start_at, playing = false, speed = 10;
 const dpr = window.devicePixelRatio || 1;
 const cvs = {htf: document.getElementById('cv-htf'), ltf: document.getElementById('cv-ltf')};
@@ -104,8 +104,9 @@ setupInteractions('ltf');
 
 function drawPane(k, bars, cur_idx, trades, zones, isHtf) {
   const cv = cvs[k], ctx = ctxs[k], el = document.getElementById('wrap-'+k);
-  cv.width = Math.round(el.clientWidth * dpr); cv.height = Math.round(el.clientHeight * dpr);
   const W = el.clientWidth, H = el.clientHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
   ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
   ctx.font = '11px system-ui';
   
@@ -116,7 +117,7 @@ function drawPane(k, bars, cur_idx, trades, zones, isHtf) {
   const win = state[k].win * state[k].zoomX;
   const bw = (x1-x0)/win;
   const shift = state[k].panX / bw;
-  const first = Math.max(0, cur_idx - win + 1) - shift;
+  const first = Math.max(0, cur_idx - win + 1 + 60 / bw) - shift;  // keep ~60px empty right of the current candle
   const xOf = i => x0 + (i - first + 0.5) * bw;
   
   let lo=Infinity, hi=-Infinity;
@@ -144,7 +145,7 @@ function drawPane(k, bars, cur_idx, trades, zones, isHtf) {
   ctx.save(); ctx.beginPath(); ctx.rect(x0,padT,x1-x0,pH); ctx.clip();
   
   for (const z of zones) {
-    if (z.born > cur_idx || z.end < cur_idx - 30) continue;
+    if (isHtf ? (z.born_l > cur || z.end_l < cur - 30) : (z.born > cur_idx || z.end < cur_idx - 30)) continue;
     const xs = xOf(Math.max(z.born, first)), xe = Math.max(xs+3, xOf(Math.min(z.end, cur_idx+50)));
     const yt = yOf(z.hi), yb = yOf(z.lo), hh = Math.max(1, yb-yt);
     ctx.fillStyle = z.flip ? 'rgba(168,85,247,0.15)' : (z.side>0 ? 'rgba(20,184,166,0.15)' : 'rgba(249,115,22,0.15)');
@@ -159,7 +160,7 @@ function drawPane(k, bars, cur_idx, trades, zones, isHtf) {
   if (!isHtf) {
     for (const t of trades) {
       if (t.entry_i > cur_idx) continue;
-      const xs = xOf(t.entry_i), xe = xOf(Math.min(t.exit_i, cur_idx));
+      const xs = xOf(t.entry_i), xe = Math.max(xs + Math.max(3, bw), xOf(Math.min(t.exit_i, cur_idx)));
       const ye = yOf(t.entry), yt = yOf(t.tp), ys = yOf(t.sl);
       
       ctx.fillStyle = 'rgba(34,197,94,0.1)'; ctx.fillRect(xs, Math.min(ye,yt), xe-xs, Math.abs(yt-ye));
@@ -170,9 +171,24 @@ function drawPane(k, bars, cur_idx, trades, zones, isHtf) {
       ctx.strokeStyle='#38bdf8'; ctx.beginPath(); ctx.moveTo(xs,ye); ctx.lineTo(xe,ye); ctx.stroke();
       
       ctx.fillStyle='#38bdf8'; ctx.beginPath(); ctx.arc(xs, ye, 3, 0, 6.3); ctx.fill();
+      if (t.add_i >= 0 && t.add_i <= cur_idx) {
+        const xa = xOf(t.add_i), ya = yOf(t.add_price), yb = yOf(t.exit_sl);
+        ctx.strokeStyle='#facc15'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(xa,yb); ctx.lineTo(Math.max(xa+12,xe),yb); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle='#facc15'; ctx.beginPath(); ctx.moveTo(xa,ya-5); ctx.lineTo(xa+5,ya); ctx.lineTo(xa,ya+5); ctx.lineTo(xa-5,ya); ctx.closePath(); ctx.fill();
+        const lbl = xa + 80 > x1; ctx.textAlign = lbl ? 'right' : 'left';
+        ctx.fillText('+ add / BE', lbl ? xa-7 : xa+7, ya-6); ctx.textAlign = 'left';
+      }
       if (t.exit_i <= cur_idx) {
         ctx.fillStyle = t.pnl > 0 ? UP : DN; ctx.beginPath(); ctx.arc(xe, yOf(t.exit), 3, 0, 6.3); ctx.fill();
       }
+    }
+    // resting limit order (signal of the current candle, fills on the next one if price trades through it)
+    const pd_ = PEND.get(cur_idx), open = trades.find(t => t.entry_i <= cur_idx && t.exit_i > cur_idx);
+    if (pd_ && (!open || (open.side === (pd_[1] > 0 ? 'LONG' : 'SHORT') && (open.add_i < 0 || open.add_i > cur_idx)))) {
+      const y = yOf(pd_[2]), xs = Math.min(xOf(pd_[4]), xOf(cur_idx) - 20), xe = x1;
+      ctx.strokeStyle='#3b82f6'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
+      ctx.beginPath(); ctx.moveTo(xs,y); ctx.lineTo(xe,y); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth=1;
+      ctx.fillStyle='#3b82f6'; ctx.textAlign='right'; ctx.fillText((pd_[1]>0?'BUY':'SELL')+' LIMIT '+fmtP(pd_[2]), x1-2, y-4); ctx.textAlign='left';
     }
   }
 
@@ -197,7 +213,7 @@ function drawPane(k, bars, cur_idx, trades, zones, isHtf) {
 }
 
 function render() {
-  const cur_htf = Math.floor(cur / 4);
+  const cur_htf = L2H[cur];
   drawPane('htf', B_HTF, cur_htf, T, OV_HTF.zones, true);
   drawPane('ltf', B_LTF, cur, T, OV_LTF.zones, false);
   
@@ -212,7 +228,9 @@ function render() {
   
   const open = T.find(t => t.entry_i <= cur && t.exit_i > cur);
   if (open) {
-    document.getElementById('pos').innerHTML = `<b class="${open.side==='LONG'?'g':'r'}">${open.side} open</b><br>Entry ${fmtP(open.entry)} SL ${fmtP(open.sl)} TP ${fmtP(open.tp)}`;
+    const added = open.add_i >= 0 && open.add_i <= cur;
+    document.getElementById('pos').innerHTML = `<b class="${open.side==='LONG'?'g':'r'}">${open.side} open</b><br>Entry ${fmtP(open.entry)} SL ${fmtP(open.sl)} TP ${fmtP(open.tp)}` +
+      (added ? `<br><span class="y">Pyramided @ ${fmtP(open.add_price)}, avg ${fmtP(open.avg_entry)}, SL -> BE ${fmtP(open.exit_sl)}</span>` : '');
   } else {
     document.getElementById('pos').innerHTML = '<span class="m">No open position</span>';
   }
@@ -243,11 +261,12 @@ function loop(now) {
   }
   requestAnimationFrame(loop);
 }
+document.getElementById('scrub').max = n - 1;
 render(); requestAnimationFrame(loop);
 </script></body></html>
 """
 
-def build(df_ltf, df_htf, trades, curve, meta, start_at, overlays_ltf, overlays_htf):
+def build(df_ltf, df_htf, trades, curve, meta, start_at, overlays_ltf, overlays_htf, l2h, pending=()):
     idx = df_ltf.index
     ms = ((idx - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta("1ms")).astype("int64")
     bars_ltf = [[int(t), float(o), float(h), float(l), float(c)] for t,o,h,l,c in zip(ms, df_ltf["open"], df_ltf["high"], df_ltf["low"], df_ltf["close"])]
@@ -260,15 +279,18 @@ def build(df_ltf, df_htf, trades, curve, meta, start_at, overlays_ltf, overlays_
     if len(trades):
         ei = idx.get_indexer(trades["entry_time"])
         xi = idx.get_indexer(trades["exit_time"])
-        for r, a, z in zip(trades.itertuples(), ei, xi):
+        ai = idx.get_indexer(pd.DatetimeIndex(trades["add_time"])) if "add_time" in trades else np.full(len(trades), -1)
+        for r, a, z, ad in zip(trades.itertuples(), ei, xi, ai):
             tl.append({"id": int(r.id), "side": r.side, "entry_i": int(a), "exit_i": int(z), "entry": float(r.entry),
                        "sl": float(r.sl), "tp": float(r.tp), "exit": float(r.exit), "reason": r.reason,
-                       "pnl": float(r.pnl), "r": float(r.r), "qty": float(r.qty)})
+                       "pnl": float(r.pnl), "r": float(r.r), "qty": float(r.qty), "add_i": int(ad),
+                       "add_price": float(getattr(r, "add_price", 0) or 0) if ad >= 0 else 0.0,
+                       "avg_entry": float(getattr(r, "avg_entry", r.entry)), "exit_sl": float(getattr(r, "exit_sl", r.sl))})
 
     data = {
         "bars_ltf": bars_ltf, "bars_htf": bars_htf, "trades": tl, "equity": [float(v) for v in curve.values],
         "start_at": int(start_at), "meta": meta,
-        "ov_ltf": overlays_ltf, "ov_htf": overlays_htf
+        "ov_ltf": overlays_ltf, "ov_htf": overlays_htf, "l2h": [int(v) for v in l2h], "pending": list(pending)
     }
     return HTML.replace("__DATA__", json.dumps(data))
 
@@ -318,6 +340,10 @@ def main():
     sym = os.path.basename(a.path).replace(".csv", "") if a.path else "synthetic"
     meta = {"title": f"{sym} | {a.strategy} | {a.market}", "capital": a.capital, "tf": a.tf, "intraday": a.tf != "1d"}
     
+    rule = {'1h': '4h', '15m': '1h', '4h': '1d', '1d': '1W'}.get(a.tf, '4h')
+    df_htf = df.resample(rule, closed='left', label='left').agg({'open':'first','high':'max','low':'min','close':'last','volume':'sum'}).dropna()
+    l2h = np.clip(df_htf.index.searchsorted(df.index, side="right") - 1, 0, max(0, len(df_htf) - 1))
+
     ov_ltf = {"zones": [], "bos": [], "swings": []}
     ov_htf = {"zones": [], "bos": [], "swings": []}
     if a.strategy == "jeafx":
@@ -327,17 +353,27 @@ def main():
         
         def map_ov(ov_data, off):
             return {
-                "zones": [{"side": z["side"], "lo": z["lo"], "hi": z["hi"], "flip": z["flip"], "born": z["born"]-off, "end": z["end"]-off} for z in ov_data["zones"] if z["end"]-off >= 0 and z["born"]-off <= last],
+                "zones": [{"side": z["side"], "lo": z["lo"], "hi": z["hi"], "htf_lo": z.get("htf_lo", z["lo"]), "htf_hi": z.get("htf_hi", z["hi"]),
+                           "flip": z["flip"], "born": z["born"]-off, "end": z["end"]-off} for z in ov_data["zones"] if z["end"]-off >= 0 and z["born"]-off <= last],
                 "bos": [{"dir": d_, "level": lv, "from": fr-off, "i": bi-off} for d_, lv, fr, bi in ov_data["bos"] if bi-off >= 0 and bi-off <= last],
                 "swings": [{"kind": kd, "price": pr, "idx": ix-off, "conf": cf-off} for kd, pr, ix, cf in ov_data["swings"] if cf-off >= 0 and ix-off <= last]
             }
         ov_ltf = map_ov(ov, off)
-        ov_htf = ov_ltf
+        to_h = lambda j: int(l2h[min(max(j, 0), last)])  # LTF bar -> HTF bar index for the left pane
+        # born_l keeps the LTF birth bar so a zone formed mid-candle stays hidden until the replay reaches it
+        ov_htf = {"zones": [{"side": z["side"], "lo": z["htf_lo"], "hi": z["htf_hi"], "flip": z["flip"],
+                             "born": to_h(z["born"]), "born_l": z["born"], "end": to_h(z["end"]), "end_l": z["end"]} for z in ov_ltf["zones"]],
+                  "bos": [], "swings": []}
 
-    rule = {'1h': '4h', '15m': '1h', '4h': '1d', '1d': '1W'}.get(a.tf, '4h')
-    df_htf = df.resample(rule, closed='left', label='left').agg({'open':'first','high':'max','low':'min','close':'last','volume':'sum'}).dropna()
-
-    html = build(df, df_htf, trades, curve, meta, start_at, ov_ltf, ov_htf)
+    # [bar, side, limit, stop, first bar of this unchanged order] for every candle that leaves a limit order resting
+    pending, prev = [], None
+    if "entry" in sig:
+        for i, (sd, en, sl_) in enumerate(zip(sig["side"].values, sig["entry"].values, sig["sl"].values)):
+            if (sd > 0 or (sd < 0 and futures)) and not np.isnan(en) and not np.isnan(sl_):
+                start = prev[4] if prev and prev[0] == i - 1 and prev[1:4] == [int(sd), float(en), float(sl_)] else i
+                prev = [i, int(sd), float(en), float(sl_), start]
+                pending.append(prev)
+    html = build(df, df_htf, trades, curve, meta, start_at, ov_ltf, ov_htf, l2h, pending)
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f: f.write(html)
     print(f"replay saved -> {a.out}  ({len(df)} candles, {len(trades)} trades)")
