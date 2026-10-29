@@ -135,14 +135,20 @@ def find_zone(S, start, end, direction, pick, imp_body):
     return z, S.l[z], S.h[z]
 
 
-def strat_jeafx(df, mode="confirm", htf_mult=4, bias_mult=4, k=1.5, atr_n=14, rr=2.0, max_rr=4.0, buf=0.1,
+BIAS_MS = {"4h": 14_400_000, "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000}
+
+
+def strat_jeafx(df, mode="confirm", htf_mult=4, bias_tf="1d", refine=1, k=1.5, atr_n=14, rr=2.0, max_rr=4.0, buf=0.1,
                 zone_age=120, cons_n=30, cons_m=20, cons_c=4.0, mom=1, mom_speed=0.5, mom_dur=1.5,
                 veto_body=3.0, bos_body=1.0, bos_speed=0.5, imp_body=0.5, eq_tol=0.1, eq_dist=5.0,
                 confirm_bars=40, flip=1, bounce=0.5, flip_age=20, allow_short=True):
     """
     mode='confirm': R13 confirmation model (price touches a fresh zone, then the LTF breaks structure our way, enter next open).
     mode='limit'  : limit order resting at the zone edge.
-    bias_mult     : R19 option. >0 requires the structure of a bigger timeframe (bias_mult HTF candles per candle) to agree.
+    bias_tf       : R19 option. Structure of a bigger timeframe must agree. Bias candles are calendar-aligned UTC buckets
+                    ("4h", "8h", "12h", "1d"); "off" disables it.
+    refine        : 1 = refine each HTF zone to the LTF origin candle (the base-data candle holding the HTF zone candle's
+                    extreme). The stop side keeps the HTF extreme, the entry edge moves to that LTF candle's other end.
     """
     o, h, l, c = (df[x].values.astype(float) for x in ("open", "high", "low", "close"))
     n = len(df)
@@ -156,8 +162,12 @@ def strat_jeafx(df, mode="confirm", htf_mult=4, bias_mult=4, k=1.5, atr_n=14, rr
     ent_out = np.full(n, np.nan)
 
     htf, ltf = Structure(k, atr_n, eq_tol), Structure(k, atr_n, eq_tol)
-    bias = Structure(k, atr_n, eq_tol) if bias_mult > 0 else None
-    bias_acc, bias_cnt = None, 0
+    bias_on = str(bias_tf).lower() not in ("off", "0", "none", "")
+    if bias_on and bias_tf not in BIAS_MS:
+        raise ValueError(f"bias_tf must be one of {sorted(BIAS_MS)} or 'off', got {bias_tf!r}")
+    bias = Structure(k, atr_n, eq_tol) if bias_on else None
+    bias_bucket = ts // BIAS_MS[bias_tf] if bias_on else None
+    bias_acc = None
     acc = None
     htf_start, htf_end = [], []  # base index where each HTF candle starts / completes
     zones, active, fails = [], [], []
@@ -250,12 +260,17 @@ def strat_jeafx(df, mode="confirm", htf_mult=4, bias_mult=4, k=1.5, atr_n=14, rr
         zi, zlo, zhi = zinfo
         ltf_start = htf_start[zi] if zi < len(htf_start) else i
         ltf_end = htf_end[zi] if zi < len(htf_end) else i
-        if ltf_end >= ltf_start and not flip_:
-            ltf_lo = min(float(np.min(ltf.l[ltf_start:ltf_end+1])), zlo)  # take the lowest of 1h or 4h
-            ltf_hi = max(float(np.max(ltf.h[ltf_start:ltf_end+1])), zhi)  # take the highest of 1h or 4h
-        else:
-            ltf_lo, ltf_hi = zlo, zhi
-        z = {"id": len(zones) + 1, "side": s_, "lo": ltf_lo, "hi": ltf_hi, "zidx": zi, "hidx": hj, "bidx": i,
+        ltf_lo, ltf_hi = zlo, zhi
+        if refine and not flip_ and ltf_end >= ltf_start:
+            # LTF origin candle = the one holding the HTF candle's extreme; stop side stays at the HTF extreme
+            if s_ == 1:
+                j = ltf_start + int(np.argmin(ltf.l[ltf_start:ltf_end + 1]))
+                ltf_lo, ltf_hi = min(ltf.l[j], zlo), ltf.h[j]
+            else:
+                j = ltf_start + int(np.argmax(ltf.h[ltf_start:ltf_end + 1]))
+                ltf_lo, ltf_hi = ltf.l[j], max(ltf.h[j], zhi)
+        z = {"id": len(zones) + 1, "side": s_, "lo": ltf_lo, "hi": ltf_hi, "htf_lo": zlo, "htf_hi": zhi,
+             "zidx": zi, "hidx": hj, "bidx": i,
              "L_price": L_price, "L_idx": L_idx, "peak": peak, "peak_i": peak_i, "state": "fresh",
              "veto": False, "flip": flip_, "atr": htf.atr, "touch_i": None, "touch_h": None, "mom_ok": True,
              "alive": True, "end_i": None, "why": "never evaluated (price never came back / zone failed first)"}
@@ -355,16 +370,15 @@ def strat_jeafx(df, mode="confirm", htf_mult=4, bias_mult=4, k=1.5, atr_n=14, rr
             htf_end.append(i)
             ev = htf.update(acc[0], acc[1], acc[2], acc[3])
             process_htf(ev, i)
-            if bias is not None:
-                if bias_acc is None:
-                    bias_acc = [acc[0], acc[1], acc[2], acc[3]]
-                else:
-                    bias_acc[1], bias_acc[2], bias_acc[3] = max(bias_acc[1], acc[1]), min(bias_acc[2], acc[2]), acc[3]
-                bias_cnt += 1
-                if bias_cnt >= bias_mult:
-                    bias.update(*bias_acc)
-                    bias_acc, bias_cnt = None, 0
             acc = None
+        if bias is not None:
+            if bias_acc is None:
+                bias_acc = [o[i], h[i], l[i], c[i]]
+            else:
+                bias_acc[1], bias_acc[2], bias_acc[3] = max(bias_acc[1], h[i]), min(bias_acc[2], l[i]), c[i]
+            if i == n - 1 or bias_bucket[i + 1] != bias_bucket[i]:  # bias candle (e.g. UTC day) closed
+                bias.update(*bias_acc)
+                bias_acc = None
         ev_l = ltf.update(o[i], h[i], l[i], c[i])
         if htf.n < 3 or htf.n - 1 < 0:
             continue
@@ -429,7 +443,8 @@ def strat_jeafx(df, mode="confirm", htf_mult=4, bias_mult=4, k=1.5, atr_n=14, rr
     # overlays for the replay chart
     zl = []
     for z in zones:
-        zl.append({"side": z["side"], "lo": z["lo"], "hi": z["hi"], "flip": z["flip"],
+        zl.append({"side": z["side"], "lo": z["lo"], "hi": z["hi"], "htf_lo": z["htf_lo"], "htf_hi": z["htf_hi"],
+                   "flip": z["flip"],
                    "start": int(htf_start[z["zidx"]]) if z["zidx"] < len(htf_start) else int(z["bidx"]),
                    "born": int(z["bidx"]), "end": int(z["end_i"] if z["end_i"] is not None else n - 1),
                    "state": z["state"]})

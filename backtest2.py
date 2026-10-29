@@ -110,78 +110,111 @@ def run_engine(df, sig, fee, slip, risk_pct, leverage, capital, allow_short, fun
     entry = sl = tp = qty = risk_amt = entry_fee = 0.0
     entry_i = 0
 
+    # pyramiding state: one add per trade, only in the trade's direction and only while it is in profit
+    pyramided = False
+    first_entry = init_sl = add_px = 0.0
+    add_i = -1
+    fund_acc, fund_i = 0.0, 0
+
     def close_trade(t, px, reason, equity):
         notional_exit = qty * px
         exit_fee = notional_exit * fee
         bars = t - entry_i + 1
-        fund = pos * qty * entry * funding * (bars * hours_per_bar / 8.0)  # longs pay when funding > 0
+        # longs pay when funding > 0; accrued per bar on the size actually held
+        fund = fund_acc + pos * qty * entry * funding * ((t - fund_i + 1) * hours_per_bar / 8.0)
         gross = (px - entry) * pos * qty
         pnl = gross - entry_fee - exit_fee - fund
         trades.append({
             "id": len(trades) + 1, "side": "LONG" if pos > 0 else "SHORT",
-            "entry_time": idx[entry_i], "entry": entry, "sl": sl, "tp": tp,
+            "entry_time": idx[entry_i], "entry": first_entry, "avg_entry": entry, "sl": init_sl, "exit_sl": sl, "tp": tp,
             "exit_time": idx[t], "exit": px, "reason": reason, "qty": qty,
             "pnl": pnl, "r": pnl / risk_amt if risk_amt else np.nan,
             "fees": entry_fee + exit_fee, "funding": fund, "bars": bars,
+            "adds": int(pyramided), "add_time": idx[add_i] if pyramided else pd.NaT,
+            "add_price": add_px if pyramided else np.nan,
             "equity_after": equity + pnl})
         return equity + pnl
 
-    pyramided = False
     for t in range(n):
-        # 1) enter at this candle's open, from the signal of the previous candle
+        # 1) enter (or add to the open trade) from the signal of the previous candle:
+        #    market signals fill at this open, limit signals fill only if this candle trades through the limit
+        lim_fill = False
         if t > 0 and side[t - 1] != 0 and not np.isnan(sl_s[t - 1]) and equity > 0:
             s = int(side[t - 1])
+            adding = pos == s and not pyramided
             lim = ent_s[t - 1]
             filled = False
-            if np.isnan(lim):
+            if pos != 0 and not adding:
+                pass  # never replace or reverse an open trade
+            elif np.isnan(lim):
                 px = o[t] * (1 + slip * s)
                 filled = True
             elif s == 1 and l[t] <= lim:
                 px, filled = min(lim, o[t]), True
             elif s == -1 and h[t] >= lim:
                 px, filled = max(lim, o[t]), True
-                
-            if not filled:
-                dist = 0
-            else:
-                dist = (px - sl_s[t - 1]) * s
+
+            dist = (px - sl_s[t - 1]) * s if filled else 0
             ok = dist > 0 and (tp_s[t - 1] - px) * s > 0
             if ok and leverage > 1 and dist / px > 0.9 / leverage:
                 ok = False  # stop is further than the liquidation price: skip the trade
+            if ok and adding and ((px - entry) * pos <= 0 or (tp - o[t]) * pos <= 0):
+                ok = False  # only add to a trade that is in profit and has not already reached its target
             if ok:
                 q = equity * risk_pct / dist
-                if q * px > equity * leverage:
-                    q = equity * leverage / px
+                held = qty if adding else 0.0
+                if (held + q) * px > equity * leverage:
+                    q = equity * leverage / px - held
+                ok = q > 0
+            if ok and not adding:
                 pos, entry, sl, tp, qty = s, px, float(sl_s[t - 1]), float(tp_s[t - 1]), q
+                first_entry, init_sl = px, sl
                 risk_amt = q * dist
                 entry_fee = q * px * fee
                 entry_i = t
+                pyramided, add_i, add_px = False, -1, 0.0
+                fund_acc, fund_i = 0.0, t
+                lim_fill = not np.isnan(lim)
+            elif ok:
+                fund_acc += pos * qty * entry * funding * ((t - fund_i) * hours_per_bar / 8.0)
+                fund_i = t
+                entry = (entry * qty + px * q) / (qty + q)
+                qty += q
+                sl = max(sl, entry) if pos == 1 else min(sl, entry)  # whole position to breakeven
+                risk_amt += q * dist
+                entry_fee += q * px * fee
+                pyramided, add_i, add_px = True, t, px
+                lim_fill = not np.isnan(lim)
 
-        # 2) manage the open trade inside this candle (stop is checked first = pessimistic)
+        # 2) manage the open trade inside this candle (stop is checked first = pessimistic).
+        #    On the candle a limit order fills we cannot know if the target traded before the fill, so only the stop counts.
         if pos != 0:
             px = reason = None
+            tp_ok = not lim_fill
             if pos == 1:
                 if o[t] <= sl:
                     px, reason = o[t] * (1 - slip), "SL"
                 elif l[t] <= sl:
                     px, reason = sl * (1 - slip), "SL"
-                elif o[t] >= tp:
+                elif tp_ok and o[t] >= tp:
                     px, reason = o[t], "TP"
-                elif h[t] >= tp:
+                elif tp_ok and h[t] >= tp:
                     px, reason = tp, "TP"
             else:
                 if o[t] >= sl:
                     px, reason = o[t] * (1 + slip), "SL"
                 elif h[t] >= sl:
                     px, reason = sl * (1 + slip), "SL"
-                elif o[t] <= tp:
+                elif tp_ok and o[t] <= tp:
                     px, reason = o[t], "TP"
-                elif l[t] <= tp:
+                elif tp_ok and l[t] <= tp:
                     px, reason = tp, "TP"
             if px is None and t > entry_i and t > 0:
                 if (pos == 1 and cl_long[t - 1]) or (pos == -1 and cl_short[t - 1]):
                     px, reason = o[t] * (1 - slip * pos), "SIGNAL"
             if px is not None:
+                if reason == "SL" and pyramided:
+                    reason = "BE"
                 equity = close_trade(t, px, reason, equity)
                 pos = 0
 
