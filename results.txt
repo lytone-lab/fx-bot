@@ -1,0 +1,265 @@
+﻿
+=== BTC/USDT 4h sma ===
+data check: 14942 candles, 1 gaps larger than 1.5 candles
+
+train: 2020-01-01 -> 2024-10-09 (10459 candles)
+test : 2024-10-09 -> 2026-10-26 (4483 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'fast': 10, 'slow': 200}               882.5      1.31       58.6     0.93    -31.7     24          47.5
+{'fast': 20, 'slow': 200}               838.3      1.29       57.3     0.92    -30.7     18          49.0
+{'fast': 30, 'slow': 200}               649.3      1.18       48.8     0.82    -28.8     17          41.4
+{'fast': 5, 'slow': 200}                625.7      1.17       39.0      0.7    -32.3     33          25.9
+{'fast': 20, 'slow': 100}               583.7      1.14       46.7      0.8    -28.4     28          34.9
+
+BUY & HOLD on TEST: return 29.3%, max drawdown -53.4%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== BTC/USDT 4h rsi ===
+data check: 14942 candles, 1 gaps larger than 1.5 candles
+
+train: 2020-01-01 -> 2024-10-09 (10459 candles)
+test : 2024-10-09 -> 2026-10-26 (4483 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'n': 14, 'low': 20, 'high': 80}        131.3      0.66      -30.7    -0.35    -52.9      3         -31.3
+{'n': 14, 'low': 30, 'high': 80}        177.1      0.66      -13.9      0.0    -52.0      7         -15.8
+{'n': 14, 'low': 30, 'high': 70}        119.5      0.58        0.5     0.17    -44.8     18          -5.0
+{'n': 14, 'low': 20, 'high': 70}         46.7      0.42       -5.1    -0.01    -30.4      5          -6.5
+{'n': 7, 'low': 20, 'high': 80}           7.8      0.28       60.3     0.87    -35.3     26          48.0
+
+BUY & HOLD on TEST: return 29.3%, max drawdown -53.4%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== BTC/USDT 1d sma ===
+data check: 3221 candles, 0 gaps larger than 1.5 candles
+
+train: 2018-01-01 -> 2024-03-03 (2254 candles)
+test : 2024-03-04 -> 2026-10-26 (967 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'fast': 5, 'slow': 100}               2062.3      1.31       30.7     0.48    -27.3      8          27.4
+{'fast': 10, 'slow': 40}               1299.3      1.15       11.5     0.29    -37.3     15           6.6
+{'fast': 10, 'slow': 200}              1101.0      1.11      -13.7     0.01    -38.7      6         -15.4
+{'fast': 30, 'slow': 50}               1093.4      1.09      -14.2     0.01    -54.3     12         -17.4
+{'fast': 5, 'slow': 200}                930.8      1.07      -10.4     0.05    -41.5      6         -12.1
+
+BUY & HOLD on TEST: return 17.9%, max drawdown -53.0%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== BTC/USDT 1d rsi ===
+data check: 3221 candles, 0 gaps larger than 1.5 candles
+
+train: 2018-01-01 -> 2024-03-03 (2254 candles)
+test : 2024-03-04 -> 2026-10-26 (967 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'n': 7, 'low': 20, 'high': 60}          85.6      0.46       -2.7     0.07    -24.7      6          -4.5
+{'n': 7, 'low': 20, 'high': 70}          73.7      0.42        4.4      0.2    -26.1      6           2.5
+{'n': 14, 'low': 20, 'high': 70}         55.0       0.4        9.9     0.28    -28.7      1           9.6
+{'n': 14, 'low': 20, 'high': 60}         34.3      0.32       22.8     0.61    -11.6      2          22.1
+{'n': 14, 'low': 20, 'high': 80}         33.8      0.32       15.7     0.38    -28.7      1          15.4
+
+BUY & HOLD on TEST: return 17.9%, max drawdown -53.0%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== ETH/USDT 4h sma ===
+data check: 14942 candles, 1 gaps larger than 1.5 candles
+
+train: 2020-01-01 -> 2024-10-09 (10459 candles)
+test : 2024-10-09 -> 2026-10-26 (4483 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'fast': 5, 'slow': 200}               2034.5      1.41      178.9     1.43    -39.0     25         158.7
+{'fast': 20, 'slow': 100}              1997.9      1.39      -10.8     0.08    -56.3     32         -19.0
+{'fast': 20, 'slow': 200}              1920.5      1.38       81.7     0.91    -48.7     18          72.2
+{'fast': 10, 'slow': 100}              1726.3      1.35       23.0     0.45    -46.1     38           9.7
+{'fast': 10, 'slow': 200}              1761.0      1.35      104.3     1.05    -50.2     21          91.8
+
+BUY & HOLD on TEST: return -4.5%, max drawdown -68.0%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== ETH/USDT 4h rsi ===
+data check: 14942 candles, 1 gaps larger than 1.5 candles
+
+train: 2020-01-01 -> 2024-10-09 (10459 candles)
+test : 2024-10-09 -> 2026-10-26 (4483 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'n': 14, 'low': 30, 'high': 80}        176.7      0.66      -39.9    -0.15    -65.5      9         -41.6
+{'n': 7, 'low': 30, 'high': 80}         113.3      0.58       -9.0     0.19    -57.4     42         -20.0
+{'n': 7, 'low': 20, 'high': 80}          11.3      0.34      -12.2      0.1    -48.0     24         -18.4
+{'n': 7, 'low': 30, 'high': 70}          -7.9      0.27      -31.7    -0.13    -57.8     62         -43.4
+{'n': 14, 'low': 20, 'high': 80}        -11.0      0.16      -31.5    -0.11    -61.8      7         -33.0
+
+BUY & HOLD on TEST: return -4.5%, max drawdown -68.0%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== ETH/USDT 1d sma ===
+data check: 3221 candles, 0 gaps larger than 1.5 candles
+
+train: 2018-01-01 -> 2024-03-03 (2254 candles)
+test : 2024-03-04 -> 2026-10-26 (967 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'fast': 10, 'slow': 40}               2896.6      1.19      110.8     0.85    -36.8     15         101.6
+{'fast': 5, 'slow': 50}                2160.0      1.13       13.9     0.33    -50.7     16           8.5
+{'fast': 5, 'slow': 200}               1800.6      1.08      -28.0    -0.07    -47.3      6         -29.4
+{'fast': 10, 'slow': 200}              1822.5      1.08      -29.1    -0.09    -46.0      4         -30.0
+{'fast': 10, 'slow': 50}               1482.7      1.03       31.7     0.45    -46.0     12          27.1
+
+BUY & HOLD on TEST: return -35.7%, max drawdown -67.6%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== ETH/USDT 1d rsi ===
+data check: 3221 candles, 0 gaps larger than 1.5 candles
+
+train: 2018-01-01 -> 2024-03-03 (2254 candles)
+test : 2024-03-04 -> 2026-10-26 (967 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'n': 14, 'low': 20, 'high': 60}         68.8      0.43       36.8     0.69    -12.7      2          36.0
+{'n': 14, 'low': 20, 'high': 70}         65.9      0.41       23.0     0.42    -35.2      1          22.6
+{'n': 14, 'low': 30, 'high': 70}         29.8      0.34      -31.5    -0.04    -58.6      3         -32.2
+{'n': 14, 'low': 20, 'high': 80}         18.6       0.3       23.0     0.42    -35.2      1          22.6
+{'n': 14, 'low': 30, 'high': 80}        -13.1      0.28      -47.8    -0.17    -72.1      2         -48.1
+
+BUY & HOLD on TEST: return -35.7%, max drawdown -67.6%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== SOL/USDT 4h sma ===
+data check: 13604 candles, 0 gaps larger than 1.5 candles
+
+train: 2020-08-11 -> 2024-12-15 (9522 candles)
+test : 2024-12-15 -> 2026-10-26 (4082 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'fast': 10, 'slow': 200}             21165.7      1.78       15.8      0.4    -38.2     18           9.7
+{'fast': 10, 'slow': 100}             15177.8      1.68      -16.7     0.02    -62.7     31         -24.1
+{'fast': 5, 'slow': 100}              12202.1      1.64      -20.8    -0.04    -62.6     41         -30.0
+{'fast': 10, 'slow': 50}              10628.8      1.61      -35.6    -0.27    -63.2     63         -46.7
+{'fast': 5, 'slow': 50}               10385.5       1.6      -47.8     -0.5    -70.3     81         -59.1
+
+BUY & HOLD on TEST: return -53.2%, max drawdown -78.5%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== SOL/USDT 4h rsi ===
+data check: 13604 candles, 0 gaps larger than 1.5 candles
+
+train: 2020-08-11 -> 2024-12-15 (9522 candles)
+test : 2024-12-15 -> 2026-10-26 (4082 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'n': 14, 'low': 20, 'high': 80}        498.5      0.92      -55.7    -0.39    -73.9      2         -56.0
+{'n': 14, 'low': 30, 'high': 80}        171.1      0.74      -48.8    -0.16    -73.9      5         -49.6
+{'n': 14, 'low': 20, 'high': 60}        149.6      0.73      -18.9    -0.23    -42.4      7         -20.6
+{'n': 7, 'low': 30, 'high': 70}         150.4      0.68      -37.1    -0.17    -52.2     58         -47.2
+{'n': 7, 'low': 20, 'high': 70}         116.5       0.6      -34.7    -0.27    -54.9     30         -40.5
+
+BUY & HOLD on TEST: return -53.2%, max drawdown -78.5%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== SOL/USDT 1d sma ===
+data check: 2268 candles, 0 gaps larger than 1.5 candles
+
+train: 2020-08-11 -> 2024-12-14 (1587 candles)
+test : 2024-12-15 -> 2026-10-26 (681 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'fast': 10, 'slow': 50}              23624.7      1.81      -30.6    -0.21    -51.0     11         -32.8
+{'fast': 20, 'slow': 40}              17990.5      1.79      -34.6     -0.3    -52.0     10         -36.6
+{'fast': 10, 'slow': 40}              18040.1      1.74       -3.8     0.18    -52.2     10          -6.7
+{'fast': 10, 'slow': 100}             15920.4      1.73      -45.6    -0.49    -59.3      6         -46.7
+{'fast': 5, 'slow': 50}               12043.9      1.66      -37.1    -0.35    -57.6     13         -39.5
+
+BUY & HOLD on TEST: return -54.7%, max drawdown -76.3%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.
+=== SOL/USDT 1d rsi ===
+data check: 2268 candles, 0 gaps larger than 1.5 candles
+
+train: 2020-08-11 -> 2024-12-14 (1587 candles)
+test : 2024-12-15 -> 2026-10-26 (681 candles)
+costs: fee 0.10% + slippage 0.050% per trade
+
+TOP 5 settings on TRAIN data, then the same settings on unseen TEST data:
+settings                           train ret% train shp  test ret% test shp test dd% trades test@2x cost%
+{'n': 7, 'low': 20, 'high': 70}         227.0      0.75      -27.2    -0.01    -59.0      6         -28.5
+{'n': 14, 'low': 30, 'high': 60}        136.7      0.63       -8.6     0.14    -45.7      4          -9.7
+{'n': 7, 'low': 20, 'high': 60}          70.8      0.49       33.0     0.58    -38.0      7          30.3
+{'n': 7, 'low': 20, 'high': 80}          46.2      0.49       20.9     0.48    -56.8      6          18.8
+{'n': 14, 'low': 30, 'high': 80}         14.4      0.44      -12.8     0.17    -62.8      2         -13.3
+
+BUY & HOLD on TEST: return -54.7%, max drawdown -76.3%
+
+HOW TO READ THIS:
+ - If TEST is much worse than TRAIN, the settings were overfitted. Not a real edge.
+ - If TEST does not beat buy & hold (or at least cut the drawdown a lot), it is not worth running.
+ - If the 2x-cost column collapses, the strategy is too fragile to survive real fees.
+ - Fewer than ~30 test trades means the result is mostly luck either way.

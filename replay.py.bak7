@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""
+replay.py - TradingView-style bar replay of a backtest, in your browser.
+
+Candles appear one by one. Trades open and close live, with the entry, stop-loss
+and take-profit boxes, the running equity curve and live statistics.
+No internet and no extra libraries needed to view it (everything is inside one HTML file).
+
+Needs backtest2.py in the same folder.
+
+Examples
+  python replay.py data/BTC_USDT_4h.csv --tf 4h --strategy trend_atr --params "fast=10,slow=200,atr_mult=2,rr=2" --start 2024-10-09
+  python replay.py data/ETH_USDT_4h.csv --tf 4h --market futures --bars 800
+  python replay.py --synthetic --tf 4h --params "fast=10,slow=50"
+
+Keys in the viewer:  Space = play/pause   Left/Right = step   Up/Down = speed   N / P = next / previous trade
+Mouse: wheel = zoom, click a trade in the list to jump to it.
+"""
+import argparse
+import json
+import os
+import sys
+import webbrowser
+
+import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import backtest2 as b  # noqa: E402
+
+HTML = r"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Backtest replay</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0b0e14;color:#d1d5db;font:13px system-ui,Segoe UI,Roboto,sans-serif}
+#app{display:flex;height:100vh}
+#left{flex:1;display:flex;flex-direction:column;min-width:0}
+#ctl{display:flex;gap:8px;align-items:center;padding:8px 10px;background:#111827;border-bottom:1px solid #1f2937;flex-wrap:wrap}
+button,select{background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:6px;padding:5px 10px;cursor:pointer;font:inherit}
+button:hover{background:#374151}
+#play{min-width:74px;background:#1d4ed8;border-color:#2563eb}
+#scrub{flex:1;min-width:140px}
+label{display:flex;gap:5px;align-items:center;color:#9ca3af}
+#wrap{flex:1;position:relative;min-height:0;overflow:hidden}
+#cv{position:absolute;left:0;top:0}
+#side{width:340px;border-left:1px solid #1f2937;background:#0f1520;display:flex;flex-direction:column;min-height:0}
+#side h3{margin:0;padding:10px 12px;font-size:13px;color:#f3f4f6;border-bottom:1px solid #1f2937}
+#stats{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;padding:10px 12px;border-bottom:1px solid #1f2937}
+#stats div span{display:block;font-size:11px;color:#6b7280}
+#stats div b{font-size:14px;font-weight:600}
+#pos{padding:10px 12px;border-bottom:1px solid #1f2937;min-height:64px}
+#list{flex:1;overflow:auto}
+.row{padding:6px 12px;border-bottom:1px solid #161e2c;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+.row:hover{background:#162033}
+.g{color:#22c55e}.r{color:#ef4444}.m{color:#9ca3af}.y{color:#f59e0b}
+</style></head>
+<body><div id="app">
+ <div id="left">
+  <div id="ctl">
+   <button id="first" title="back to the first candle">&#9198;</button>
+   <button id="back" title="step back (Left)">&#9664;</button>
+   <button id="play">&#9654; Play</button>
+   <button id="fwd" title="step forward (Right)">&#9654;&#9654;</button>
+   <button id="nxt" title="jump to next trade (N)">Next trade</button>
+   <button id="end" title="jump to the end">&#9197;</button>
+   <label>Speed <select id="spd"><option>2</option><option>5</option><option selected>10</option><option>20</option><option>50</option><option>100</option></select> bars/s</label>
+   <label><input type="checkbox" id="pev" checked> pause at trade open/close</label>
+   <input type="range" id="scrub" min="0" value="0">
+  </div>
+  <div id="wrap"><canvas id="cv"></canvas></div>
+ </div>
+ <div id="side">
+  <h3 id="title"></h3>
+  <div id="stats"></div>
+  <div id="pos"></div>
+  <div id="list"></div>
+ </div>
+</div>
+<script>
+(function(){
+const D = __DATA__;
+const B = D.bars, T = D.trades, E = D.equity, n = B.length;
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const wrap = document.getElementById('wrap');
+const dpr = window.devicePixelRatio || 1;
+let cur = Math.max(0, Math.min(D.start_at, n-1)), playing = false, speed = 10, win = 120, hoverI = -1, listKey = '';
+const UP = '#22c55e', DN = '#ef4444';
+T.forEach(t => { t.dir = t.side === 'LONG' ? 1 : -1; });
+const evBars = new Set(); T.forEach(t => { evBars.add(t.entry_i); evBars.add(t.exit_i); });
+const ddArr = []; { let pk = -Infinity, mn = 0; for (let i = 0; i < n; i++) { pk = Math.max(pk, E[i]); mn = Math.min(mn, E[i]/pk - 1); ddArr.push(mn); } }
+
+const fmtP = p => p >= 1000 ? p.toFixed(2) : (p >= 1 ? p.toFixed(4) : p.toFixed(6));
+const fmtT = ms => { const s = new Date(ms).toISOString(); return D.meta.intraday ? s.slice(5,16).replace('T',' ') : s.slice(0,10); };
+const sgn = v => (v >= 0 ? '+' : '') + v.toFixed(2);
+
+document.getElementById('title').textContent = D.meta.title;
+const scrub = document.getElementById('scrub'); scrub.max = n - 1;
+
+function resize(){
+  const r = wrap.getBoundingClientRect();
+  cv.width = Math.floor(r.width * dpr); cv.height = Math.floor(r.height * dpr);
+  cv.style.width = r.width + 'px'; cv.style.height = r.height + 'px';
+}
+
+function drawChart(){
+  const W = cv.width / dpr, H = cv.height / dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
+  ctx.font = '11px system-ui, Segoe UI, sans-serif';
+  const padL = 8, padR = 74, padT = 24, axisH = 20, gap = 10, padB = 6;
+  const eqH = Math.round(H * 0.19), pH = H - eqH - gap - axisH - padT - padB;
+  const x0 = padL, x1 = W - padR;
+  const first = Math.max(0, cur - win + 1), slots = win + 8, bw = (x1 - x0) / slots;
+  const xOf = i => x0 + (i - first + 0.5) * bw;
+
+  // visible trades
+  const vis = T.filter(t => t.entry_i <= cur && t.exit_i >= first);
+
+  // price scale
+  let lo = Infinity, hi = -Infinity;
+  for (let i = first; i <= cur; i++) { lo = Math.min(lo, B[i][3]); hi = Math.max(hi, B[i][2]); }
+  for (const t of vis) { if (t.entry_i >= first || t.exit_i > cur) { lo = Math.min(lo, t.sl, t.tp); hi = Math.max(hi, t.sl, t.tp); } }
+  const padv = (hi - lo) * 0.05 || 1; lo -= padv; hi += padv;
+  const yOf = p => padT + (hi - p) / (hi - lo) * pH;
+
+  // grid + price axis
+  ctx.strokeStyle = '#161e2c'; ctx.fillStyle = '#6b7280'; ctx.lineWidth = 1; ctx.textAlign = 'left';
+  for (let k = 0; k <= 5; k++) {
+    const p = lo + (hi - lo) * k / 5, y = Math.round(yOf(p)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+    ctx.fillText(fmtP(p), x1 + 6, y + 4);
+  }
+  // time axis
+  ctx.textAlign = 'center';
+  const step = Math.max(1, Math.round(win / 6));
+  for (let i = first; i <= cur; i += step) ctx.fillText(fmtT(B[i][0]), xOf(i), padT + pH + 14);
+
+  ctx.save(); ctx.beginPath(); ctx.rect(x0, padT, x1 - x0, pH); ctx.clip();
+  // trade boxes (behind candles)
+  for (const t of vis) {
+    const xs = xOf(t.entry_i);
+    let xe = xOf(Math.min(t.exit_i, cur)); if (xe - xs < bw * 0.6) xe = xs + bw * 0.6;
+    xe = Math.min(xe, x1);
+    const ye = yOf(t.entry), yt = yOf(t.tp), ys = yOf(t.sl);
+    ctx.fillStyle = 'rgba(34,197,94,0.16)'; ctx.fillRect(xs, Math.min(ye, yt), xe - xs, Math.abs(yt - ye));
+    ctx.fillStyle = 'rgba(239,68,68,0.16)'; ctx.fillRect(xs, Math.min(ye, ys), xe - xs, Math.abs(ys - ye));
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#22c55e'; ctx.beginPath(); ctx.moveTo(xs, yt); ctx.lineTo(xe, yt); ctx.stroke();
+    ctx.strokeStyle = '#ef4444'; ctx.beginPath(); ctx.moveTo(xs, ys); ctx.lineTo(xe, ys); ctx.stroke();
+    ctx.setLineDash([4,3]); ctx.strokeStyle = '#e5e7eb'; ctx.beginPath(); ctx.moveTo(xs, ye); ctx.lineTo(xe, ye); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // candles
+  const body = Math.max(1, bw * 0.7);
+  for (let i = first; i <= cur; i++) {
+    const [, o, h, l, c] = B[i], x = xOf(i), up = c >= o;
+    ctx.strokeStyle = ctx.fillStyle = up ? UP : DN;
+    ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, yOf(h)); ctx.lineTo(Math.round(x) + 0.5, yOf(l)); ctx.stroke();
+    const yo = yOf(o), yc = yOf(c);
+    ctx.fillRect(x - body / 2, Math.min(yo, yc), body, Math.max(1, Math.abs(yc - yo)));
+  }
+
+  ctx.restore();
+  // markers + labels
+  ctx.textAlign = 'left';
+  for (const t of vis) {
+    const xs = xOf(t.entry_i), ye = yOf(t.entry);
+    ctx.fillStyle = '#38bdf8'; ctx.beginPath();
+    if (t.dir > 0) { ctx.moveTo(xs, ye - 3); ctx.lineTo(xs - 6, ye + 9); ctx.lineTo(xs + 6, ye + 9); }
+    else { ctx.moveTo(xs, ye + 3); ctx.lineTo(xs - 6, ye - 9); ctx.lineTo(xs + 6, ye - 9); }
+    ctx.closePath(); ctx.fill();
+    if (t.exit_i <= cur) {
+      const xx = xOf(t.exit_i), yy = yOf(t.exit), col = t.pnl > 0 ? UP : DN;
+      ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(xx - 5, yy - 5); ctx.lineTo(xx + 5, yy + 5); ctx.moveTo(xx + 5, yy - 5); ctx.lineTo(xx - 5, yy + 5); ctx.stroke(); ctx.lineWidth = 1;
+      ctx.fillStyle = col; ctx.fillText(t.reason + ' ' + sgn(t.r) + 'R', Math.min(xx + 8, x1 - 70), yy - 8);
+    } else {
+      const c = B[cur][4], rr = t.dir * (c - t.entry) / Math.abs(t.entry - t.sl);
+      ctx.fillStyle = rr >= 0 ? UP : DN;
+      ctx.fillText('open ' + sgn(rr) + 'R', Math.min(xOf(cur) + 8, x1 - 70), yOf(c) - 8);
+    }
+  }
+  // current price line
+  const cc = B[cur][4], yc = yOf(cc);
+  ctx.setLineDash([2,3]); ctx.strokeStyle = '#6b7280'; ctx.beginPath(); ctx.moveTo(x0, yc); ctx.lineTo(x1, yc); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#e5e7eb'; ctx.fillRect(x1 + 1, yc - 8, padR - 3, 16);
+  ctx.fillStyle = '#0b0e14'; ctx.textAlign = 'left'; ctx.fillText(fmtP(cc), x1 + 5, yc + 4);
+
+  // header text
+  ctx.fillStyle = '#9ca3af'; ctx.textAlign = 'left';
+  const bar = B[hoverI >= first && hoverI <= cur ? hoverI : cur];
+  ctx.fillText(fmtT(bar[0]) + '   O ' + fmtP(bar[1]) + '  H ' + fmtP(bar[2]) + '  L ' + fmtP(bar[3]) + '  C ' + fmtP(bar[4]) + '     bar ' + (cur + 1) + ' / ' + n, x0, 14);
+
+  // equity panel
+  const ey0 = padT + pH + axisH + gap;
+  let elo = Infinity, ehi = -Infinity;
+  for (let i = first; i <= cur; i++) { elo = Math.min(elo, E[i]); ehi = Math.max(ehi, E[i]); }
+  const ep = (ehi - elo) * 0.1 || 1; elo -= ep; ehi += ep;
+  const eY = v => ey0 + (ehi - v) / (ehi - elo) * eqH;
+  ctx.strokeStyle = '#1f2937'; ctx.strokeRect(x0 + 0.5, ey0 + 0.5, x1 - x0, eqH);
+  ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 1.5; ctx.beginPath();
+  for (let i = first; i <= cur; i++) { const x = xOf(i), y = eY(E[i]); i === first ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+  ctx.stroke(); ctx.lineWidth = 1;
+  ctx.fillStyle = '#f59e0b'; ctx.textAlign = 'left';
+  ctx.fillText(E[cur].toFixed(2), x1 + 6, Math.max(ey0 + 10, Math.min(ey0 + eqH, eY(E[cur]) + 4)));
+  ctx.fillStyle = '#6b7280'; ctx.fillText('equity', x0 + 6, ey0 + 12);
+
+  // hover crosshair
+  if (hoverI >= first && hoverI <= cur) {
+    ctx.strokeStyle = 'rgba(156,163,175,0.35)'; ctx.beginPath(); ctx.moveTo(xOf(hoverI), padT); ctx.lineTo(xOf(hoverI), ey0 + eqH); ctx.stroke();
+  }
+}
+
+const elStats = document.getElementById('stats'), elPos = document.getElementById('pos'), elList = document.getElementById('list');
+function updateSide(){
+  let closed = 0, wins = 0, pnl = 0, sumR = 0, gp = 0, gl = 0;
+  for (const t of T) if (t.exit_i <= cur) { closed++; pnl += t.pnl; sumR += t.r; if (t.pnl > 0) { wins++; gp += t.pnl; } else gl -= t.pnl; }
+  const eq = E[cur], ret = (eq / D.meta.capital - 1) * 100;
+  const cell = (k, v, c) => '<div><span>' + k + '</span><b class="' + (c || '') + '">' + v + '</b></div>';
+  elStats.innerHTML =
+    cell('Equity', eq.toFixed(2), ret >= 0 ? 'g' : 'r') + cell('Return', sgn(ret) + '%', ret >= 0 ? 'g' : 'r') +
+    cell('Closed trades', closed) + cell('Win rate', closed ? (wins / closed * 100).toFixed(0) + '%' : '-') +
+    cell('Avg R', closed ? sgn(sumR / closed) : '-') + cell('Profit factor', gl > 0 ? (gp / gl).toFixed(2) : (gp > 0 ? 'inf' : '-')) +
+    cell('Max drawdown', (ddArr[cur] * 100).toFixed(1) + '%', 'r') + cell('Net P&L', sgn(pnl), pnl >= 0 ? 'g' : 'r');
+  const open = T.find(t => t.entry_i <= cur && t.exit_i > cur);
+  if (open) {
+    const c = B[cur][4], rr = open.dir * (c - open.entry) / Math.abs(open.entry - open.sl);
+    elPos.innerHTML = '<b class="' + (open.dir > 0 ? 'g' : 'r') + '">' + open.side + ' open</b> &nbsp; <span class="' + (rr >= 0 ? 'g' : 'r') + '">' + sgn(rr) + ' R</span><br>' +
+      '<span class="m">entry</span> ' + fmtP(open.entry) + ' &nbsp; <span class="m">SL</span> <span class="r">' + fmtP(open.sl) + '</span> &nbsp; <span class="m">TP</span> <span class="g">' + fmtP(open.tp) + '</span>';
+  } else elPos.innerHTML = '<span class="m">No open position</span>';
+  const shown = T.filter(t => t.entry_i <= cur), key = shown.length + '|' + closed;
+  if (key !== listKey) {
+    listKey = key;
+    elList.innerHTML = shown.slice().reverse().slice(0, 300).map(t => {
+      const done = t.exit_i <= cur;
+      const res = done ? '<span class="' + (t.pnl > 0 ? 'g' : 'r') + '">' + t.reason + ' ' + sgn(t.r) + 'R</span>' : '<span class="y">open</span>';
+      return '<div class="row" data-i="' + t.entry_i + '"><span>#' + t.id + ' <b class="' + (t.dir > 0 ? 'g' : 'r') + '">' + t.side + '</b> <span class="m">' + fmtP(t.entry) + '</span></span>' + res + '</div>';
+    }).join('') || '<div class="row m">No trades yet</div>';
+  }
+  scrub.value = cur;
+  document.getElementById('play').innerHTML = playing ? '&#10074;&#10074; Pause' : '&#9654; Play';
+}
+elList.addEventListener('click', e => { const r = e.target.closest('.row'); if (r && r.dataset.i !== undefined) { cur = +r.dataset.i; playing = false; render(); } });
+
+function render(){ drawChart(); updateSide(); }
+function setPlaying(v){ playing = v; if (playing && cur >= n - 1) cur = 0; }
+function nextTrade(dir){
+  if (dir > 0) { const t = T.find(t => t.entry_i > cur); if (t) cur = t.entry_i; }
+  else { for (let k = T.length - 1; k >= 0; k--) if (T[k].entry_i < cur) { cur = T[k].entry_i; break; } }
+  playing = false; render();
+}
+document.getElementById('play').onclick = () => { setPlaying(!playing); render(); };
+document.getElementById('back').onclick = () => { cur = Math.max(0, cur - 1); playing = false; render(); };
+document.getElementById('fwd').onclick = () => { cur = Math.min(n - 1, cur + 1); playing = false; render(); };
+document.getElementById('first').onclick = () => { cur = 0; playing = false; render(); };
+document.getElementById('end').onclick = () => { cur = n - 1; playing = false; render(); };
+document.getElementById('nxt').onclick = () => nextTrade(1);
+document.getElementById('spd').onchange = e => { speed = +e.target.value; };
+scrub.oninput = () => { cur = +scrub.value; playing = false; render(); };
+cv.addEventListener('wheel', e => { e.preventDefault(); win = Math.max(30, Math.min(500, Math.round(win * (e.deltaY > 0 ? 1.15 : 0.87)))); render(); }, { passive: false });
+cv.addEventListener('mousemove', e => {
+  const r = cv.getBoundingClientRect(), W = r.width, padL = 8, padR = 74, slots = win + 8, bw = (W - padR - padL) / slots, first = Math.max(0, cur - win + 1);
+  hoverI = first + Math.floor((e.clientX - r.left - padL) / bw); if (!playing) render();
+});
+cv.addEventListener('mouseleave', () => { hoverI = -1; if (!playing) render(); });
+window.addEventListener('keydown', e => {
+  const sel = document.getElementById('spd');
+  if (e.code === 'Space') { e.preventDefault(); setPlaying(!playing); render(); }
+  else if (e.code === 'ArrowRight') { cur = Math.min(n - 1, cur + 1); playing = false; render(); }
+  else if (e.code === 'ArrowLeft') { cur = Math.max(0, cur - 1); playing = false; render(); }
+  else if (e.code === 'ArrowUp') { sel.selectedIndex = Math.min(sel.options.length - 1, sel.selectedIndex + 1); speed = +sel.value; }
+  else if (e.code === 'ArrowDown') { sel.selectedIndex = Math.max(0, sel.selectedIndex - 1); speed = +sel.value; }
+  else if (e.key === 'n' || e.key === 'N') nextTrade(1);
+  else if (e.key === 'p' || e.key === 'P') nextTrade(-1);
+});
+window.addEventListener('resize', () => { resize(); render(); });
+
+let last = performance.now(), acc = 0;
+function loop(now){
+  const dt = Math.min(0.25, (now - last) / 1000); last = now;
+  if (playing) {
+    acc += dt * speed;
+    while (acc >= 1) {
+      acc -= 1;
+      if (cur < n - 1) { cur++; if (document.getElementById('pev').checked && evBars.has(cur)) { playing = false; acc = 0; break; } }
+      else { playing = false; acc = 0; break; }
+    }
+    render();
+  }
+  requestAnimationFrame(loop);
+}
+resize(); render(); requestAnimationFrame(loop);
+window.__replay = { set: i => { cur = i; render(); }, win: w => { win = w; render(); }, n: n, trades: T.length };
+})();
+</script></body></html>
+"""
+
+
+def build(df, trades, curve, meta, start_at):
+    idx = df.index
+    ms = ((idx - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta("1ms")).astype("int64")
+    bars = [[int(t), float(o), float(h), float(l), float(c)] for t, o, h, l, c in
+            zip(ms, df["open"], df["high"], df["low"], df["close"])]
+    tl = []
+    if len(trades):
+        ei = idx.get_indexer(trades["entry_time"])
+        xi = idx.get_indexer(trades["exit_time"])
+        for r, a, z in zip(trades.itertuples(), ei, xi):
+            tl.append({"id": int(r.id), "side": r.side, "entry_i": int(a), "exit_i": int(z), "entry": float(r.entry),
+                       "sl": float(r.sl), "tp": float(r.tp), "exit": float(r.exit), "reason": r.reason,
+                       "pnl": float(r.pnl), "r": float(r.r), "qty": float(r.qty)})
+    data = {"bars": bars, "trades": tl, "equity": [float(v) for v in curve.values], "start_at": int(start_at), "meta": meta}
+    return HTML.replace("__DATA__", json.dumps(data))
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("path", nargs="?")
+    p.add_argument("--tf", default="4h")
+    p.add_argument("--strategy", choices=b.STRATEGIES, default="trend_atr")
+    p.add_argument("--params", default="")
+    p.add_argument("--market", choices=["spot", "futures"], default="spot")
+    p.add_argument("--start")
+    p.add_argument("--end")
+    p.add_argument("--bars", type=int, default=1500, help="how many candles to replay (the most recent ones)")
+    p.add_argument("--capital", type=float, default=1000.0)
+    p.add_argument("--risk", type=float, default=0.01)
+    p.add_argument("--leverage", type=float, default=1.0)
+    p.add_argument("--fee", type=float)
+    p.add_argument("--slip", type=float)
+    p.add_argument("--funding", type=float)
+    p.add_argument("--out", default="out/replay.html")
+    p.add_argument("--no-open", action="store_true")
+    p.add_argument("--synthetic", action="store_true")
+    a = p.parse_args()
+
+    futures = a.market == "futures"
+    fee = a.fee if a.fee is not None else (0.0005 if futures else 0.001)
+    slip = a.slip if a.slip is not None else (0.0003 if futures else 0.0005)
+    funding = a.funding if a.funding is not None else (0.0001 if futures else 0.0)
+    leverage = a.leverage if futures else 1.0
+
+    df = b.synthetic() if a.synthetic else b.load(a.path)
+    sig = b.STRATEGIES[a.strategy](df, **b.parse_params(a.params))  # indicators use the full history
+    if a.start:
+        m = df.index >= pd.Timestamp(a.start, tz="UTC")
+        df, sig = df[m], sig[m]
+    if a.end:
+        m = df.index <= pd.Timestamp(a.end, tz="UTC")
+        df, sig = df[m], sig[m]
+    df, sig = df.iloc[-a.bars:], sig.iloc[-a.bars:]  # replay window; the engine runs on exactly this window
+
+    trades, curve = b.run_engine(df, sig, fee, slip, a.risk, leverage, a.capital, futures, funding, a.tf)
+    first_entry = df.index.get_loc(trades["entry_time"].iloc[0]) if len(trades) else 0
+    start_at = max(0, first_entry - 60)
+    sym = os.path.basename(a.path).replace(".csv", "") if a.path else "synthetic"
+    meta = {"title": f"{sym}  |  {a.strategy}  |  {a.market}  |  fee {fee*100:.3f}% slip {slip*100:.3f}% risk {a.risk*100:.1f}%",
+            "capital": a.capital, "tf": a.tf, "intraday": a.tf != "1d"}
+    html = build(df, trades, curve, meta, start_at)
+    os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
+    with open(a.out, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"replay saved -> {a.out}   ({len(df)} candles, {len(trades)} trades)")
+    print("Controls: Space play/pause | Left/Right step | Up/Down speed | N/P next/prev trade | wheel zoom")
+    if not a.no_open:
+        webbrowser.open("file://" + os.path.abspath(a.out))
+
+
+if __name__ == "__main__":
+    main()
