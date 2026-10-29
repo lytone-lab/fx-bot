@@ -174,7 +174,7 @@ def run_engine(df, sig, fee, slip, risk_pct, leverage, capital, allow_short, fun
                 entry_i = t
                 pyramided, add_i, add_px = False, -1, 0.0
                 fund_acc, fund_i = 0.0, t
-                lim_fill = not np.isnan(lim)
+                lim_fill = not np.isnan(lim) and px != o[t]
             elif ok:
                 fund_acc += pos * qty * entry * funding * ((t - fund_i) * hours_per_bar / 8.0)
                 fund_i = t
@@ -184,18 +184,20 @@ def run_engine(df, sig, fee, slip, risk_pct, leverage, capital, allow_short, fun
                 risk_amt += q * dist
                 entry_fee += q * px * fee
                 pyramided, add_i, add_px = True, t, px
-                lim_fill = not np.isnan(lim)
+                lim_fill = not np.isnan(lim) and px != o[t]
 
         # 2) manage the open trade inside this candle (stop is checked first = pessimistic).
-        #    On the candle a limit order fills we cannot know if the target traded before the fill, so only the stop counts.
+        #    On the candle a limit order fills inside the bar we cannot know if the target traded before the fill,
+        #    so only the stop counts. A stop hit at the moved (breakeven) level is "BE"; a gap through it stays "SL".
         if pos != 0:
             px = reason = None
             tp_ok = not lim_fill
+            sl_hit = "BE" if pyramided else "SL"
             if pos == 1:
                 if o[t] <= sl:
                     px, reason = o[t] * (1 - slip), "SL"
                 elif l[t] <= sl:
-                    px, reason = sl * (1 - slip), "SL"
+                    px, reason = sl * (1 - slip), sl_hit
                 elif tp_ok and o[t] >= tp:
                     px, reason = o[t], "TP"
                 elif tp_ok and h[t] >= tp:
@@ -204,7 +206,7 @@ def run_engine(df, sig, fee, slip, risk_pct, leverage, capital, allow_short, fun
                 if o[t] >= sl:
                     px, reason = o[t] * (1 + slip), "SL"
                 elif h[t] >= sl:
-                    px, reason = sl * (1 + slip), "SL"
+                    px, reason = sl * (1 + slip), sl_hit
                 elif tp_ok and o[t] <= tp:
                     px, reason = o[t], "TP"
                 elif tp_ok and l[t] <= tp:
@@ -213,8 +215,6 @@ def run_engine(df, sig, fee, slip, risk_pct, leverage, capital, allow_short, fun
                 if (pos == 1 and cl_long[t - 1]) or (pos == -1 and cl_short[t - 1]):
                     px, reason = o[t] * (1 - slip * pos), "SIGNAL"
             if px is not None:
-                if reason == "SL" and pyramided:
-                    reason = "BE"
                 equity = close_trade(t, px, reason, equity)
                 pos = 0
 

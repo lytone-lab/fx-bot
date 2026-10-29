@@ -49,7 +49,7 @@ label{display:flex;gap:5px;align-items:center;color:#9ca3af}
    <label>Speed <select id="spd"><option>2</option><option>5</option><option selected>10</option><option>20</option></select></label>
    <label style="margin-left:auto"><input type="checkbox" id="pev" checked> Pause</label>
   </div>
-  <input type="range" id="scrub" min="0" value="0" style="width:100%;margin:8px 0;padding:0 10px">
+  <input type="range" id="scrub" min="0" max="0" value="0" style="width:100%;margin:8px 0;padding:0 10px">
   <h3>Replay Stats</h3>
   <div id="stats"></div>
   <div id="pos"></div>
@@ -104,8 +104,9 @@ setupInteractions('ltf');
 
 function drawPane(k, bars, cur_idx, trades, zones, isHtf) {
   const cv = cvs[k], ctx = ctxs[k], el = document.getElementById('wrap-'+k);
-  cv.width = Math.round(el.clientWidth * dpr); cv.height = Math.round(el.clientHeight * dpr);
   const W = el.clientWidth, H = el.clientHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
   ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
   ctx.font = '11px system-ui';
   
@@ -144,7 +145,7 @@ function drawPane(k, bars, cur_idx, trades, zones, isHtf) {
   ctx.save(); ctx.beginPath(); ctx.rect(x0,padT,x1-x0,pH); ctx.clip();
   
   for (const z of zones) {
-    if (z.born > cur_idx || z.end < cur_idx - (isHtf ? 8 : 30)) continue;
+    if ((isHtf ? z.born_l > cur : z.born > cur_idx) || z.end < cur_idx - (isHtf ? 8 : 30)) continue;
     const xs = xOf(Math.max(z.born, first)), xe = Math.max(xs+3, xOf(Math.min(z.end, cur_idx+50)));
     const yt = yOf(z.hi), yb = yOf(z.lo), hh = Math.max(1, yb-yt);
     ctx.fillStyle = z.flip ? 'rgba(168,85,247,0.15)' : (z.side>0 ? 'rgba(20,184,166,0.15)' : 'rgba(249,115,22,0.15)');
@@ -172,7 +173,7 @@ function drawPane(k, bars, cur_idx, trades, zones, isHtf) {
       ctx.fillStyle='#38bdf8'; ctx.beginPath(); ctx.arc(xs, ye, 3, 0, 6.3); ctx.fill();
       if (t.add_i >= 0 && t.add_i <= cur_idx) {
         const xa = xOf(t.add_i), ya = yOf(t.add_price), yb = yOf(t.exit_sl);
-        ctx.strokeStyle='#facc15'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(xa,yb); ctx.lineTo(Math.max(xa,xe),yb); ctx.stroke(); ctx.setLineDash([]);
+        ctx.strokeStyle='#facc15'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(xa,yb); ctx.lineTo(Math.max(xa+12,xe),yb); ctx.stroke(); ctx.setLineDash([]);
         ctx.fillStyle='#facc15'; ctx.beginPath(); ctx.moveTo(xa,ya-5); ctx.lineTo(xa+5,ya); ctx.lineTo(xa,ya+5); ctx.lineTo(xa-5,ya); ctx.closePath(); ctx.fill();
         ctx.fillText('+ add / BE', xa+7, ya-6);
       }
@@ -251,6 +252,7 @@ function loop(now) {
   }
   requestAnimationFrame(loop);
 }
+document.getElementById('scrub').max = n - 1;
 render(); requestAnimationFrame(loop);
 </script></body></html>
 """
@@ -342,14 +344,16 @@ def main():
         
         def map_ov(ov_data, off):
             return {
-                "zones": [{"side": z["side"], "lo": z["lo"], "hi": z["hi"], "flip": z["flip"], "born": z["born"]-off, "end": z["end"]-off} for z in ov_data["zones"] if z["end"]-off >= 0 and z["born"]-off <= last],
+                "zones": [{"side": z["side"], "lo": z["lo"], "hi": z["hi"], "htf_lo": z.get("htf_lo", z["lo"]), "htf_hi": z.get("htf_hi", z["hi"]),
+                           "flip": z["flip"], "born": z["born"]-off, "end": z["end"]-off} for z in ov_data["zones"] if z["end"]-off >= 0 and z["born"]-off <= last],
                 "bos": [{"dir": d_, "level": lv, "from": fr-off, "i": bi-off} for d_, lv, fr, bi in ov_data["bos"] if bi-off >= 0 and bi-off <= last],
                 "swings": [{"kind": kd, "price": pr, "idx": ix-off, "conf": cf-off} for kd, pr, ix, cf in ov_data["swings"] if cf-off >= 0 and ix-off <= last]
             }
         ov_ltf = map_ov(ov, off)
         to_h = lambda j: int(l2h[min(max(j, 0), last)])  # LTF bar -> HTF bar index for the left pane
-        ov_htf = {"zones": [{"side": z["side"], "lo": z.get("htf_lo", z["lo"]), "hi": z.get("htf_hi", z["hi"]), "flip": z["flip"],
-                             "born": to_h(z["born"]), "end": to_h(z["end"])} for z in ov_ltf["zones"]],
+        # born_l keeps the LTF birth bar so a zone formed mid-candle stays hidden until the replay reaches it
+        ov_htf = {"zones": [{"side": z["side"], "lo": z["htf_lo"], "hi": z["htf_hi"], "flip": z["flip"],
+                             "born": to_h(z["born"]), "born_l": z["born"], "end": to_h(z["end"])} for z in ov_ltf["zones"]],
                   "bos": [], "swings": []}
 
     html = build(df, df_htf, trades, curve, meta, start_at, ov_ltf, ov_htf, l2h)
